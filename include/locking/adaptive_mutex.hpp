@@ -34,23 +34,21 @@
 
 #include <locking/type_traits.hpp>
 
+#include <cstddef>
+
 #include <atomic>
-#include <chrono>
 #include <mutex>
 
 namespace locking {
 
-template <typename M = std::mutex, typename C = std::chrono::steady_clock>
+template <typename M = std::mutex>
 class AdaptiveMutex {
 private:
-    using RepT = typename C::rep;
-
     M mutex_{ };
-    std::atomic<RepT> predictor_ = 0;
+    std::atomic_intmax_t predictor_ = 0;
 
 public:
     static_assert(IS_MUTEX<M>, "L must be a Mutex type");
-    static_assert(IS_CLOCK<C>, "C must be a Clock type");
 
     AdaptiveMutex() = default;
 
@@ -63,21 +61,19 @@ public:
     AdaptiveMutex& operator=(AdaptiveMutex &&other) = delete;
 
     void lock() {
-        const auto start = C::now();
-        RepT measured = 0;
+        std::intmax_t num_spins = 0;
 
         while (!mutex_.try_lock()) {
-            const auto now = C::now();
-            measured = (now - start).count();
+            ++num_spins;
 
-            if (measured >= 2 * predictor_) {
+            if (num_spins >= 2 * predictor_) {
                 mutex_.lock();
 
                 break;
             }
         }
 
-        predictor_ += (measured - predictor_) / 8;
+        predictor_ += (num_spins - predictor_) / 8;
     }
 
     bool try_lock() {
